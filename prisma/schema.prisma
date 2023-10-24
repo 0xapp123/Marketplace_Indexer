@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String               @id @unique
+  username            String               @unique
+  walletAddress       String               @unique
+  nonce               String
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  profile             Profile?
+  notificationSetting NotificationSetting?
+  collections         Collection[]
+  launchpads          Launchpad[]
+  ownedNFTs           NFT[]                @relation("owner")
+  createdNFTs         NFT[]                @relation("minter")
+  hides               Hide[]
+  likes               Like[]
+  listings            Listing[]
+  offers              Offer[]              @relation("seller")
+  boughtOffers        Offer[]              @relation("buyer")
+  sellerActivities    Activity[]           @relation("seller")
+  buyerActivities     Activity[]           @relation("buyer")
+  notifications       Notification[]
+}
+
+model Profile {
+  id        String   @id @unique
+  userId    String   @unique
+  bio       String?
+  avatarId  String?  @unique
+  bannerId  String?  @unique
+  twitter   String?
+  discord   String?
+  facebook  String?
+  reddit    String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  avatar    Photo?   @relation("avatar", fields: [avatarId], references: [id])
+  banner    Photo?   @relation("banner", fields: [bannerId], references: [id])
+}
+
+model Photo {
+  id               String      @id @unique
+  url              String
+  fileEntityId     String      @unique
+  link             String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  file             FileEntity?
+  profileAvatar    Profile?    @relation("avatar")
+  profileBanner    Profile?    @relation("banner")
+  collectionAvatar Collection? @relation("avatar")
+  collectionBanner Collection? @relation("banner")
+  launchpadLogo    Launchpad?  @relation("logo")
+  launchpadImg     Launchpad?  @relation("image")
+}
+
+model FileEntity {
+  id          String   @id @unique
+  fileName    String
+  path        String
+  key         String
+  mimeType    String
+  size        Int
+  description String
+  photoId     String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  photo       Photo?   @relation(fields: [photoId], references: [id])
+}
+
+model Collection {
+  id          String     @id @unique
+  name        String
+  address     String     @unique
+  supply      Int
+  avatarId    String?    @unique
+  bannerId    String?    @unique
+  desc        String?
+  website     String?
+  twitter     String?
+  discord     String?
+  network     Network
+  creatorId   String
+  launchpadId String?    @unique
+  verified    Boolean    @default(false)
+  feature     Boolean    @default(false)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  creator     User       @relation(fields: [creatorId], references: [id])
+  avatar      Photo?     @relation("avatar", fields: [avatarId], references: [id])
+  banner      Photo?     @relation("banner", fields: [bannerId], references: [id])
+  nfts        NFT[]
+  stats       Stat[]
+  launchpad   Launchpad? @relation(fields: [launchpadId], references: [id])
+}
+
+model NFT {
+  id           String       @id @unique
+  ownerId      String
+  minterId     String
+  collectionId String
+  tokenAddress String
+  tokenId      String // #id value in nft name
+  tokenUri     String
+  name         String
+  image        String
+  attributes   Json
+  royalty      Int // permyriad value
+  contractType ContractType
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  collection   Collection   @relation(fields: [collectionId], references: [id])
+  listing      Listing[]
+  offers       Offer[]
+  owner        User         @relation("owner", fields: [ownerId], references: [id])
+  minter       User         @relation("minter", fields: [minterId], references: [id])
+  activities   Activity[]
+  hides        Hide[]
+  likes        Like[]
+}
+
+model Listing {
+  id        String        @id @unique
+  nftId     String
+  sellerId  String
+  price     BigInt
+  network   Network
+  startTime DateTime
+  endTime   DateTime
+  expiresAt DateTime?
+  signature String
+  status    ListingStatus
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  seller    User          @relation(fields: [sellerId], references: [id])
+  nft       NFT           @relation(fields: [nftId], references: [id])
+  offers    Offer[]
+}
+
+model Offer {
+  id         String      @id @unique
+  listingId  String
+  nftId      String
+  sellerId   String
+  buyerId    String
+  offerPrice BigInt
+  signature  String
+  parameters String
+  status     OfferStatus
+  expiresAt  DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  nft        NFT         @relation(fields: [nftId], references: [id])
+  seller     User        @relation("seller", fields: [sellerId], references: [id])
+  buyer      User        @relation("buyer", fields: [buyerId], references: [id])
+  listing    Listing     @relation(fields: [listingId], references: [id])
+}
+
+model Launchpad {
+  id                  String          @id @unique
+  creatorId           String
+  name                String
+  symbol              String
+  desc                String?
+  logoId              String?         @unique
+  imageId             String?         @unique
+  mintPrice           BigInt
+  supply              Int
+  owners              String[]
+  ownerRoyalties      Int[] // permyriad value
+  maxPerTx            Int
+  maxPerWallet        Int
+  wlEnabled           Boolean
+  wlAddresses         String[]
+  enableReserveTokens Boolean
+  startDate           DateTime
+  endDate             DateTime
+  network             Network
+  twitter             String?
+  discord             String?
+  facebook            String?
+  reddit              String?
+  status              LaunchpadStatus
+  collectionUri       String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  creator             User            @relation(fields: [creatorId], references: [id])
+  logoImg             Photo?          @relation("logo", fields: [logoId], references: [id])
+  image               Photo?          @relation("image", fields: [imageId], references: [id])
+  collection          Collection?
+}
+
+model Activity {
+  id           String        @id @unique
+  nftId        String
+  sellerId     String
+  buyerId      String?
+  price        BigInt
+  actionType   ActivityType
+  txHash       String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  nft          NFT           @relation(fields: [nftId], references: [id])
+  seller       User          @relation("seller", fields: [sellerId], references: [id])
+  buyer        User?         @relation("buyer", fields: [buyerId], references: [id])
+  notification Notification?
+}
+
+model Hide {
+  id        String   @id @unique
+  nftId     String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+  nft       NFT      @relation(fields: [nftId], references: [id])
+}
+
+model Like {
+  id        String   @id @unique
+  nftId     String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
+  nft       NFT      @relation(fields: [nftId], references: [id])
+}
+
+model NotificationSetting {
+  id                   String   @id @unique
+  userId               String   @unique
+  notifyEmail          String
+  minOfferTokenAddress String
+  minOfferThreshold    BigInt
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  user                 User     @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id           String           @id @unique
+  userId       String
+  type         NotificationType
+  activityId   String           @unique
+  acknowledged Boolean
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  user         User             @relation(fields: [userId], references: [id])
+  activity     Activity         @relation(fields: [activityId], references: [id])
+}
+
+model Stat {
+  id           String     @id @unique
+  collectionId String
+  owners       Int
+  listedItems  Int
+  salesItems   Int
+  floorPrice   BigInt
+  volume       BigInt
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  collection   Collection @relation(fields: [collectionId], references: [id])
+}
+
+enum ActivityType {
+  MINTED
+  LISTED
+  UNLISTED
+  CHANGE_PRICE
+  SOLD
+  CREATED_OFFER
+  CHANGE_OFFER
+  CANCELED_OFFER
+  ACCPETED_OFFER
+}
+
+enum NotificationType {
+  SOLD
+  NEW_OFFER
+  OFFER_ACCEPTED
+  OFFER_REJECTED
+}
+
+enum Network {
+  BNB
+  MAIN
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  INACTIVE
+}
+
+enum LaunchpadStatus {
+  APPLIED
+  ACCEPTED
+  REJECTED
+  PROCESSING
+  PUBLISHED
+}
+
+enum OfferStatus {
+  CREATED
+  CANCELED
+  ACCEPTED
+  REJECTED
+}
+
+enum ContractType {
+  ERC721
+  ERC1155
+}
