@@ -1,5 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 
 import { LoggerMiddleware } from '@common/middleware';
 import { InkRequestMiddleware } from '@common/middleware/ink-request.middleware';
@@ -16,6 +17,7 @@ import { PrismaModule } from './prisma';
       isGlobal: true,
       load: [configuration],
     }),
+    ScheduleModule.forRoot(),
     CommonModule,
     HealthModule,
     PrismaModule,

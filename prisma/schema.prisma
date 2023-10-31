@@ -267,6 +267,8 @@ model Stat {
   salesItems   Int
   floorPrice   BigInt
   volume       BigInt
+  increased    Float      @default(100)
+  period       PeriodType
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
   collection   Collection @relation(fields: [collectionId], references: [id])
@@ -320,4 +322,12 @@ enum OfferStatus {
 enum ContractType {
   ERC721
   ERC1155
+}
+
+enum PeriodType {
+  HOUR
+  SIX_HOURS
+  DAY
+  WEEK
+  ALL
 }

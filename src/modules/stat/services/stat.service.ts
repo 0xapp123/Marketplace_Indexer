@@ -2,8 +2,17 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { GeneratorService } from '@common/providers';
-import { ListingStatus } from '@prisma/client';
+import { Activity, ActivityType, PeriodType } from '@prisma/client';
 import { PrismaService } from '@prisma/prisma.service';
+import { PaginationParams } from '@common/dto/pagenation-params.dto';
+import { FilterParams } from '@common/dto/filter-params.dto';
+import { SortParams, StatsSortBy } from '@common/dto/sort-params.dto';
+import { SearchParams } from '@common/dto/search-params.dto';
+
+const ONE_HOUR = 1 * 60 * 60 * 1000;
+const SIX_HOURS = 6 * 60 * 60 * 1000;
+const ONE_DAY = 24 * 60 * 60 * 1000;
+const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class StatService {
@@ -14,97 +23,149 @@ export class StatService {
   ) {}
 
   async updateAllStats() {
-    this.logger.log(`updating stats ...`);
-    const collections = await this.prismaService.collection.findMany();
     try {
-      for (let i = 0; i < collections.length; i++) {
-        const owners = new Set();
-        const listedItems = [];
-        let salesItems = 0;
-        let floorPrice = 0;
-        let volume = BigInt(0);
+      this.logger.log('Updating stats ...');
 
-        const nfts = await this.prismaService.nFT.findMany({
-          where: { collectionId: collections[i].id },
-        });
-        // Iterate over each NFT and add its OWNERID to the Set
-        for (const nft of nfts) {
-          owners.add(nft.ownerId);
+      const collections = await this.prismaService.collection.findMany();
 
-          const listing = await this.prismaService.listing.findFirst({
-            where: { nftId: nft.id, status: ListingStatus.ACTIVE },
+      await Promise.all(
+        collections.map(async (collection) => {
+          const ownerIdSet = new Set();
+          let floorPrice = BigInt(0);
+          let volume = BigInt(0);
+
+          const nfts = await this.prismaService.nFT.findMany({
+            where: { collectionId: collection.id },
           });
-          if (listing) listedItems.push(listing);
 
-          const sales = await this.prismaService.listing.findMany({
-            where: { nftId: nft.id, status: ListingStatus.SOLD },
+          const activitiesAll = await this.prismaService.activity.findMany({
+            where: { nftId: { in: nfts.map((nft) => nft.id) } },
           });
-          salesItems += sales.length;
 
-          sales.forEach((item) => {
-            volume += BigInt(item.price);
-          });
-        }
+          const updateStatistics = async (period: PeriodType) => {
+            const activitiesPeriod = activitiesAll.filter((activity) =>
+              this.isActivityInRange(activity, period),
+            );
 
-        floorPrice = Math.min(...listedItems.map((item) => item.price));
+            const soldActivities = activitiesPeriod.filter(
+              (activity) => activity.actionType === ActivityType.SOLD,
+            );
 
-        await this.prismaService.stat.create({
-          data: {
-            id: this.generatorService.uuid(),
-            owners: owners.size,
-            collectionId: collections[i].id,
-            listedItems: listedItems.length,
-            salesItems,
-            floorPrice,
-            volume,
-          },
-        });
-      }
+            const listingActivities = activitiesPeriod.filter(
+              (activity) => activity.actionType === ActivityType.LISTED,
+            );
+
+            soldActivities.forEach((activity) =>
+              ownerIdSet.add(activity.buyerId),
+            );
+
+            floorPrice =
+              listingActivities.length > 0
+                ? BigInt(
+                    Math.min(
+                      ...listingActivities.map((item) => Number(item.price)),
+                    ),
+                  )
+                : floorPrice;
+
+            volume = soldActivities.reduce(
+              (totalVolume, activity) => totalVolume + activity.price,
+              volume,
+            );
+
+            const existingStat = await this.prismaService.stat.findFirst({
+              where: {
+                collectionId: collection.id,
+                period: period,
+              },
+            });
+
+            const statData = {
+              owners: ownerIdSet.size,
+              listedItems: listingActivities.length,
+              salesItems: soldActivities.length,
+              floorPrice,
+              volume,
+            };
+
+            if (existingStat) {
+              let increased = 0;
+              if (existingStat.volume) {
+                increased = Number(volume / existingStat.volume) * 100;
+              }
+              await this.prismaService.stat.update({
+                where: { id: existingStat.id },
+                data: {
+                  ...statData,
+                  increased,
+                },
+              });
+            } else {
+              await this.prismaService.stat.create({
+                data: {
+                  id: this.generatorService.uuid(),
+                  period,
+                  collection: { connect: { id: collection.id } },
+                  ...statData,
+                },
+              });
+            }
+
+            this.logger.log(
+              `Updated stat for collectionId: ${collection.id} and period: ${period}`,
+            );
+          };
+
+          await updateStatistics(PeriodType.HOUR);
+          await updateStatistics(PeriodType.SIX_HOURS);
+          await updateStatistics(PeriodType.DAY);
+          await updateStatistics(PeriodType.WEEK);
+          await updateStatistics(PeriodType.ALL);
+        }),
+      );
+
+      this.logger.log('Stats update complete');
     } catch (e) {
       this.logger.error(e);
     }
   }
 
-  async getTopCollections(period: string) {
-    let timeFilter = {};
+  isActivityInRange(activity: Activity, period: PeriodType) {
+    const activityCreatedAt = new Date(activity.createdAt);
 
-    if (period === '1h') {
-      timeFilter = {
-        updatedAt: {
-          gte: new Date(Date.now() - 1 * 60 * 60 * 1000),
-        },
-      };
-    } else if (period === '6h') {
-      timeFilter = {
-        updatedAt: {
-          gte: new Date(Date.now() - 6 * 60 * 60 * 1000),
-        },
-      };
-    } else if (period === '24h') {
-      timeFilter = {
-        updatedAt: {
-          gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
-        },
-      };
-    } else {
-      timeFilter = {
-        updatedAt: {
-          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-        },
-      };
+    switch (period) {
+      case PeriodType.HOUR:
+        return activityCreatedAt > new Date(Date.now() - ONE_HOUR);
+      case PeriodType.SIX_HOURS:
+        return activityCreatedAt > new Date(Date.now() - SIX_HOURS);
+      case PeriodType.DAY:
+        return activityCreatedAt > new Date(Date.now() - ONE_DAY);
+      case PeriodType.WEEK:
+        return activityCreatedAt > new Date(Date.now() - ONE_WEEK);
+      case PeriodType.ALL:
+        return true;
+      default:
+        return false;
     }
+  }
 
+  async getTopCollections({ period }: FilterParams) {
     return await this.prismaService.stat.findMany({
       where: {
-        ...timeFilter,
+        period,
       },
       orderBy: {
         volume: 'desc',
       },
-      distinct: ['collectionId'],
-      take: 10,
+      take: 12,
+      distinct: 'collectionId',
       include: {
-        collection: true,
+        collection: {
+          include: {
+            avatar: true,
+            banner: true,
+          },
+        },
       },
     });
   }
@@ -122,7 +183,12 @@ export class StatService {
       distinct: ['collectionId'],
       take: 3,
       include: {
-        collection: true,
+        collection: {
+          include: {
+            avatar: true,
+            banner: true,
+          },
+        },
       },
     });
   }
@@ -143,22 +209,92 @@ export class StatService {
               gte: new Date(Date.now() - 60 * 1000),
             },
           },
+          include: {
+            collection: {
+              include: {
+                avatar: true,
+                banner: true,
+              },
+            },
+          },
         });
       }),
     );
   }
 
-  async getStatByCollectionId(collectionId: string) {
+  async getStatByCollectionId(collectionId: string, { period }: FilterParams) {
     return await this.prismaService.stat.findFirst({
       where: {
         collectionId,
-        updatedAt: {
-          gte: new Date(Date.now() - 60 * 1000),
+        period,
+      },
+      include: {
+        collection: {
+          include: {
+            avatar: true,
+            banner: true,
+          },
+        },
+      },
+    });
+  }
+
+  async getCollections(
+    { sortBy, sortAscending }: SortParams,
+    { contains }: SearchParams,
+    { period }: FilterParams,
+    { offset = 1, startId = 0, limit }: PaginationParams,
+  ) {
+    const order = sortAscending === 'asc' ? 'asc' : 'desc';
+
+    let orderBy = {};
+
+    switch (sortBy) {
+      case StatsSortBy.FLOOR:
+        orderBy = { floorPrice: order };
+        break;
+      case StatsSortBy.ITEMS:
+        orderBy = { collection: { supply: order } };
+        break;
+      case StatsSortBy.LIQUIDITY:
+        orderBy = { increased: order };
+        break;
+      case StatsSortBy.LISTED:
+        orderBy = { listedItems: order };
+        break;
+      case StatsSortBy.OWNERS:
+        orderBy = { owners: order };
+        break;
+      case StatsSortBy.SALES:
+        orderBy = { salesItems: order };
+        break;
+      case StatsSortBy.VOLUME:
+        orderBy = { volume: order };
+        break;
+      default:
+        break;
+    }
+
+    return await this.prismaService.stat.findMany({
+      where: {
+        period,
+        collection: {
+          name: {
+            contains: contains ? contains.slice(0, 2) : undefined,
+          },
         },
       },
       include: {
-        collection: true,
+        collection: {
+          include: {
+            avatar: true,
+            banner: true,
+          },
+        },
       },
+      orderBy,
+      take: limit,
+      skip: offset * startId,
     });
   }
 }
